@@ -1,0 +1,73 @@
+{
+  "name": "workspace_manager",
+  "displayName": "Workspace Manager",
+  "description": "VSCode extension that allows defined workspace setup for tabs and terminals",
+  "publisher": "Jumppad",
+  "version": "0.1.0",
+  "repository": "https://github.com/jumppad-labs/workspace-manager.git",
+  "engines": {
+    "vscode": "^1.69.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "menus": {
+      "editor/title": [
+        {
+          "command": "workspace_manager.reloadBrowser",
+          "group": "navigation@1",
+          "when": "activeEditor === 'WebviewEditor'"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "workspace_manager.reloadBrowser",
+          "when": "activeEditor === 'WebviewEditor'"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "workspace_manager.reloadWorkspace",
+        "title": "Reload Workspace",
+        "category": "Workspace Manager"
+      },
+      {
+        "command": "workspace_manager.reloadBrowser",
+        "title": "Reload Tab",
+        "category": "Workspace Manager",
+        "icon": {
+          "light": "images/reload_light.svg",
+          "dark": "images/reload_dark.svg"
+        }
+      }
+    ],
+    "configuration": []
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.69.0",
+    "@types/glob": "^7.2.0",
+    "@types/mocha": "^9.1.1",
+    "@types/node": "16.x",
+    "@typescript-eslint/eslint-plugin": "^5.31.0",
+    "@typescript-eslint/parser": "^5.31.0",
+    "eslint": "^8.20.0",
+    "glob": "^8.0.3",
+    "mocha": "^10.0.0",
+    "typescript": "^4.7.4",
+    "@vscode/test-electron": "^2.1.5"
+  }
+}
