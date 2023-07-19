@@ -1,0 +1,44 @@
+{
+  "tabs": [
+    {
+      "type": "file",
+      "uri": "file:///c%3A/Users/jacks/code/src/github.com/shipyard-run/save-restore-editors/src/extension.ts", 
+      "viewColumn": 1, 
+      "focus": true
+    },
+    {
+      "type": "browser",
+      "uri": "https://www.shipyard.run", 
+      "name": "Shipyard"
+    },
+    {
+      "type": "browser",
+      "uri": "https://www.shipyard.run/docs/install", 
+      "name": "Docs"
+    },
+    {
+      "type": "browser",
+      "uri": "http://localhost:8080", 
+      "name": "Consul Thing"
+    },
+    {
+      "type": "terminal",
+      "name": "Terminal 1", 
+      "command": "docker ps", 
+      "viewColumn": 1, 
+      "location": "editor", 
+      "env": {"HOME": "/root"},
+      "cwd": "/root"
+    },
+    {
+      "type": "terminal", 
+      "name": "Terminal 2", 
+      "command": "ls -la", 
+      "viewColumn": 1, 
+      "location": "panel", 
+      "focus": true
+    }
+  ],
+  "closeTabsOnStart": true,
+  "closeTerminalsOnStart": true
+}

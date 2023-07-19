@@ -1,23 +1,29 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { escape } from 'querystring';
 
 interface TConfig {
   tabs: TTab[];
-  terminals: TTerminal[];
   closeAllTerminalsOnStart: boolean;
   closeAllTabsOnStart: boolean;
 }
 
 interface TTab {
-  uri: string;
-  title: string;
+  type: string;
+  name: string;
   viewColumn: vscode.ViewColumn;
   active: boolean;
 }
 
-interface TTerminal {
+interface TFile extends TTab {
+  uri: string;
+}
+
+interface TBrowser extends TTab {
+  uri: string;
+}
+
+interface TTerminal extends TTab {
   name: string;
   command: string;
   viewColumn: vscode.ViewColumn;
@@ -28,14 +34,13 @@ interface TTerminal {
   cwd: string;
 }
 
+var panels: vscode.WebviewPanel[] = [];
+
 const emptyConfig: TConfig = {
   tabs: [],
-  terminals: [],
   closeAllTabsOnStart: false,
   closeAllTerminalsOnStart: false,
 };
-
-const panels: vscode.WebviewPanel[] = [];
 
 function getConfigPath(): string | undefined {
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -60,25 +65,82 @@ function getConfig(configPath: string): TConfig {
     }
     return config;
   } catch (err) {
-    //fs.writeFileSync(configPath, JSON.stringify(emptyConfig, null, 2));
     return { ...emptyConfig };
   }
 }
 
+function getExtensionUri() {
+  const extension = vscode.extensions.getExtension('jumppad.workspace-config');
+  return extension
+    ? extension.extensionUri
+    : vscode.Uri.parse('');
+}
 
-async function openFile(uri: string) {
+function getWorkspaceUri() {
+  return vscode.workspace.workspaceFolders 
+    ? vscode.workspace.workspaceFolders[0].uri 
+    : vscode.Uri.parse(''); 
+}
+
+function getBrowserIcon() {
+  const extensionPath = getExtensionUri();
+  return {
+    light: vscode.Uri.joinPath(extensionPath, 'images', 'browser_light.svg'),
+    dark: vscode.Uri.joinPath(extensionPath, 'images', 'browser_dark.svg')
+  };
+}
+
+function getActiveTabIndex(config: TConfig) {
+  const active = config.tabs.find(t => t.active);
+  if (!active) {
+    return 1;
+  }
+
+  const tabs = vscode.window.tabGroups.all.map(group => group.tabs).flat();
+  const index = tabs.findIndex(t => t.label === active.name);
+  return index+1;
+}
+
+async function openTerminal(command: string, name: string, column: number, location: string) {
+  // if we have a terminal with the same name, grab it
+  let term: vscode.Terminal | undefined = vscode.window.terminals.find((term) => term.name === name);
+  let opts: vscode.TerminalOptions;
+  var opened = false;
+
+  // if not create a new one
+  if (term === undefined) {
+    if(location === 'editor') {
+      var locationOpts: vscode.TerminalEditorLocationOptions = {viewColumn: column, preserveFocus: true};
+      opts = {name: name, location: locationOpts, isTransient: true};
+    } else {
+      opts = {name: name, isTransient: true};
+    }
+
+    term = vscode.window.createTerminal(opts);
+    opened = true;
+  }
+
+  term?.show();
+
+  if (command !== '') {
+    term?.sendText(command);
+  }
+
+  return opened;
+}
+
+async function openFile(uri: vscode.Uri) {
   const options: vscode.TextDocumentShowOptions = {
     preview: false,
     viewColumn: vscode.ViewColumn.One,
   };
 
-  const filePath = path.join(vscode.workspace.rootPath || '', uri);
-  const docURI = vscode.Uri.file(filePath);
+  const workspaceFolder = getWorkspaceUri(); 
+  const docURI = vscode.Uri.joinPath(workspaceFolder, uri.path);
 
   const files = await vscode.workspace.textDocuments.filter(doc => doc.fileName === docURI.fsPath);
 
   if (files.length === 0) {
-    console.log("openFile: " + filePath);
     // no active file, open it and return
     const doc = await vscode.workspace.openTextDocument(docURI);
     await vscode.window.showTextDocument(doc, options);
@@ -88,75 +150,45 @@ async function openFile(uri: string) {
   // if we have the window open and it is not active just show it
   for await (const doc of files){
     if(vscode.window.activeTextEditor?.document.fileName !== doc.fileName){
-      console.log("openFile: " + filePath);
-      vscode.window.showTextDocument(doc, options).then((editor) => {}).then(undefined, err => {});
+      vscode.window.showTextDocument(doc, options).then(editor => {}).then(undefined, err => {});
     }
   }
 }
 
-async function openTerminal(command: string, name: string, column: number, location: string) {
-  // if we have a terminal with the same name, grab it
-  let term: vscode.Terminal | undefined = vscode.window.terminals.find((term) => term.name === name);
-  let opts: vscode.TerminalOptions;
-
-  // if not create a new one
-  if (term === undefined) {
-    if(location === "editor") {
-      var locationOpts: vscode.TerminalEditorLocationOptions = {viewColumn: column};
-      opts = {name: name, location: locationOpts, isTransient: true};
-    } else {
-      opts = {name: name, isTransient: true};
-    }
-
-    term = vscode.window.createTerminal(opts);
+async function openHtml(uri: vscode.Uri, name: string, column: number) {
+  const openTabs = vscode.window.tabGroups.all.map(group => group.tabs).flat();
+  const tab = openTabs.find(t => t.label === name);
+  if (tab) {
+    reloadBrowser(tab);
+    return;
   }
-
-  term?.show();
-
-  if (command !== '') {
-    term?.sendText(command);
-  }
-}
-
-async function openHtml(context: vscode.ExtensionContext, uri: string, title: string, column: number) {
-  // if the panel is open close it
-  panels.forEach((panel, index) => {
-    if (panel.title === title) {
-      panel.dispose();
-      panels.splice(index, 1);
-    }
-  });
 
   const panel = vscode.window.createWebviewPanel(
-    'openWebview',
-    title,
-    column,
+    'openWebview', 
+    name, 
+    column, 
     {
       enableScripts: true,
-      retainContextWhenHidden: true,
+      retainContextWhenHidden: true
     }
   );
 
   panels.push(panel);
 
-  panel.iconPath = {
-    light: vscode.Uri.joinPath(vscode.Uri.parse(context.extensionPath), "images", "browser_light.svg"),
-    dark: vscode.Uri.joinPath(vscode.Uri.parse(context.extensionPath), "images", "browser_dark.svg"),
-  };
-  
-  panel.webview.html = getWebViewHTML(uri);
+  panel.iconPath = getBrowserIcon();
+  panel.webview.html = getWebViewHTML(uri.toString());
   panel.webview.onDidReceiveMessage(
     message => {
       switch (message.function) {
         case 'openFile':
           openFile(message.uri);
-          return;
+          break;
         case 'openHtml':
-          openHtml(context, message.uri, message.title, message.viewColumn);
-          return;
+          openHtml(message.uri, message.name, message.viewColumn);
+          break;
         case 'openTerminal':
           openTerminal(message.command, message.name, message.viewColumn, message.location);
-          return;
+          break;
       }
     },
     undefined,
@@ -165,132 +197,129 @@ async function openHtml(context: vscode.ExtensionContext, uri: string, title: st
 }
 
 function getWebViewHTML(uri: string) {
-return `<!DOCTYPE html>
-      <html lang="en">
-      <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Cat Coding</title>
-          <style>
-            iframe {
-              height: 100vh;
-              background-color: #FFF;
-            }
-
-            body {
-              padding: 0;
-              margin: 0;
-              height: 100%;
-            }
-
-            ul {
-              list-style-type: none;
-              margin: 0;
-              padding: 0;
-              overflow: hidden;
-              background-color: #333;
-            }
-            
-            li {
-              float: left;
-            }
-
-            li div {
-              display: block;
-              color: white;
-              font-size: 16px;
-              text-align: center;
-              padding: 14px 16px;
-              text-decoration: none;
-            }
-            
-            li a {
-              font-size: 16px;
-              display: block;
-              color: white;
-              text-align: center;
-              padding: 14px 16px;
-              text-decoration: none;
-            }
-            
-            /* Change the link color to #111 (black) on hover */
-            li a:hover {
-              background-color: #111;
-            }
-          </style>
-          <script>
-            const vscode = acquireVsCodeApi();
-            function openFile(uri) {
-              vscode.postMessage({
-                function: 'openFile',
-                uri: uri
-              });
-            }
-          
-            function openHtml(uri, title) {
-              vscode.postMessage({
-                function: 'openHtml',
-                uri: uri,
-                title: title,
-              });
-            }
-            
-            function openTerminal(command, name) {
-              vscode.postMessage({
-                function: 'openTerminal',
-                command: command,
-                name: name,
-              });
-            }
-
-            function displayMessage (evt) {
-              if (evt.data.function === 'openHtml') {
-                openHtml(evt.data.uri,evt.data.title);
+  return `<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Cat Coding</title>
+            <style>
+              iframe {
+                height: 100vh;
+                background-color: #FFF;
+              }
+  
+              body {
+                padding: 0;
+                margin: 0;
+                height: 100%;
+              }
+  
+              ul {
+                list-style-type: none;
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                background-color: #333;
               }
               
-              if (evt.data.function === 'openFile') {
-                openFile(evt.data.uri,evt.data.title);
+              li {
+                float: left;
+              }
+  
+              li div {
+                display: block;
+                color: white;
+                font-size: 16px;
+                text-align: center;
+                padding: 14px 16px;
+                text-decoration: none;
               }
               
-              if (evt.data.function === 'openTerminal') {
-                openTerminal(evt.data.command,evt.data.name);
+              li a {
+                font-size: 16px;
+                display: block;
+                color: white;
+                text-align: center;
+                padding: 14px 16px;
+                text-decoration: none;
               }
               
-              if (evt.data.function === 'reloadIFrame') {
-                reloadIFrame();
+              /* Change the link color to #111 (black) on hover */
+              li a:hover {
+                background-color: #111;
               }
-            }
+            </style>
+            <script>
+              const vscode = acquireVsCodeApi();
+              function openFile(uri) {
+                vscode.postMessage({
+                  function: 'openFile',
+                  uri: uri
+                });
+              }
             
-            if (window.addEventListener) {
-              window.addEventListener("message", displayMessage, false);
-            }
-            else {
-              window.attachEvent("onmessage", displayMessage);
-            }
-
-            function reloadIFrame() {
-              document.getElementById('content').src = document.getElementById('content').src
-            }
-          </script>
-      </head>
-      <body>
-          <!--<ul>
-            <li><div>${uri}</div></li>
-            <li style="float:right"><a class="active" href="#" onclick="reloadIFrame()">&#x27F3</a></li>
-          </ul>-->
-          <iframe width="100%" height="100%" src="${uri}" frameborder="0" id="content"></iframe>
-      </body>
-      </html>`;
+              function openHtml(uri, title) {
+                vscode.postMessage({
+                  function: 'openHtml',
+                  uri: uri,
+                  title: title,
+                });
+              }
+              
+              function openTerminal(command, name) {
+                vscode.postMessage({
+                  function: 'openTerminal',
+                  command: command,
+                  name: name,
+                });
+              }
+  
+              function displayMessage (evt) {
+                if (evt.data.function === 'openHtml') {
+                  openHtml(evt.data.uri,evt.data.title);
+                }
+                
+                if (evt.data.function === 'openFile') {
+                  openFile(evt.data.uri,evt.data.title);
+                }
+                
+                if (evt.data.function === 'openTerminal') {
+                  openTerminal(evt.data.command,evt.data.name);
+                }
+                
+                if (evt.data.function === 'reloadIFrame') {
+                  reloadIFrame();
+                }
+              }
+              
+              if (window.addEventListener) {
+                window.addEventListener("message", displayMessage, false);
+              }
+              else {
+                window.attachEvent("onmessage", displayMessage);
+              }
+  
+              function reloadIFrame() {
+                document.getElementById('content').src = document.getElementById('content').src
+              }
+            </script>
+        </head>
+        <body>
+            <!--<ul>
+              <li><div>${uri}</div></li>
+              <li style="float:right"><a class="active" href="#" onclick="reloadIFrame()">&#x27F3</a></li>
+            </ul>-->
+            <iframe width="100%" height="100%" src="${uri}" frameborder="0" id="content"></iframe>
+        </body>
+        </html>`;
 }
 
-export function reloadActiveBrowser() {
-  let activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-  if (activeTab?.input instanceof  vscode.TabInputWebview) {
-    panels.forEach((panel, index) => {
-      if (panel.title === activeTab?.label) {
-        panel.webview.postMessage({"function":"reloadIFrame"});
-      }
-    });
+export function reloadBrowser(tab?:vscode.Tab) {
+  const activeTab = tab?.label ? tab : vscode.window.tabGroups.activeTabGroup.activeTab;
+  const panel = panels.find(p => p.title === activeTab?.label);
+  if(panel) {
+    panel.webview.postMessage({"function":"reloadIFrame"});
   }
 }
 
@@ -303,28 +332,59 @@ export async function restoreEditors(context: vscode.ExtensionContext) {
   const config: TConfig = getConfig(configPath);
 
   if (config.closeAllTabsOnStart) {
-    vscode.window.tabGroups.all.forEach(group => {
-      vscode.window.tabGroups.close(group.tabs);
-    });
+    const tabs = vscode.window.tabGroups.all.map(group => group.tabs).flat()
+    .filter(tab => config.tabs.findIndex(t => {
+      if (tab.input instanceof vscode.TabInputText && t.type === "file") {
+        const file = <TFile>t;
+        const fileTab = <vscode.TabInputText>tab.input;
+        return path.join(getWorkspaceUri().path, file.uri) === fileTab.uri.path;
+      } else {
+        return t.name === tab.label;
+      }
+    }) === -1);
+  
+    tabs.forEach(tab => vscode.window.tabGroups.close(tab));
   }
   
   if (config.closeAllTerminalsOnStart) {
-    vscode.window.terminals.forEach(terminal => {
-      terminal.dispose();
-    });
+    const terminals = vscode.window.terminals.filter(terminal => config.tabs.findIndex(t => t.name === terminal.name && t.type === "terminal") === -1);
+    terminals.forEach(terminal => terminal.dispose());
   }
 
-  config.tabs.forEach(async (tab) => {
-    const uri = vscode.Uri.parse(tab.uri);
-    if(uri.scheme === 'http' || uri.scheme === 'https') {
-      openHtml(context, tab.uri, tab.title, tab.viewColumn);
-    } else {
-      openFile(tab.uri);
+  config.tabs.forEach(tab => {
+    switch(tab.type) {
+      case "file":
+        const file = <TFile>tab;  
+        openFile(vscode.Uri.parse(file.uri, false));
+        break;
+      case "browser":
+        const browser = <TBrowser>tab;  
+        openHtml(vscode.Uri.parse(browser.uri), browser.name, browser.viewColumn);
+        break;
+      case "terminal":
+        const terminal = <TTerminal>tab;  
+        openTerminal(terminal.command, terminal.name, terminal.viewColumn, terminal.location);
+        break;
     }
   });
-  
-  config.terminals.forEach(async (terminal) => {
-    let col: number = terminal.viewColumn || 1;
-    openTerminal(terminal.command, terminal.name, col, terminal.location);
-  });
+
+  // get terminals from config, check how many of those don't exist atm
+  const unopenedTerminals = vscode.window.terminals.filter(terminal => config.tabs.findIndex(t => t.name === terminal.name && t.type === "terminal") === -1);
+
+  // wait for all the terminals to be opened.
+  let unopenedCount = unopenedTerminals.length;
+  if (unopenedCount > 0) {
+    let ot = vscode.window.onDidOpenTerminal((event) => {
+      unopenedCount--;
+      if(unopenedCount === 0) {
+        vscode.commands.executeCommand(`workbench.action.openEditorAtIndex${getActiveTabIndex(config)}`);
+        ot.dispose();
+      }
+    });
+  }
+}
+
+function setActiveTab(config:TConfig) {
+    const active = vscode.window.tabGroups.all.map(group => group.tabs).flat().find(tab => tab.isActive);
+    
 }

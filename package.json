@@ -1,10 +1,10 @@
 {
-  "name": "workspace_manager",
-  "displayName": "Workspace Manager",
+  "name": "workspace-config",
+  "displayName": "Workspace Config",
   "description": "VSCode extension that allows defined workspace setup for tabs and terminals",
   "publisher": "Jumppad",
-  "version": "0.1.0",
-  "repository": "https://github.com/jumppad-labs/workspace-manager.git",
+  "version": "0.2.0",
+  "repository": "https://github.com/jumppad-labs/vscode-workspace-config.git",
   "engines": {
     "vscode": "^1.69.0"
   },
@@ -19,28 +19,28 @@
     "menus": {
       "editor/title": [
         {
-          "command": "workspace_manager.reloadBrowser",
+          "command": "workspace_config.reloadBrowser",
           "group": "navigation@1",
           "when": "activeEditor === 'WebviewEditor'"
         }
       ],
       "editor/title/context": [
         {
-          "command": "workspace_manager.reloadBrowser",
+          "command": "workspace_config.reloadBrowser",
           "when": "activeEditor === 'WebviewEditor'"
         }
       ]
     },
     "commands": [
       {
-        "command": "workspace_manager.reloadWorkspace",
+        "command": "workspace_config.reloadWorkspace",
         "title": "Reload Workspace",
-        "category": "Workspace Manager"
+        "category": "Workspace Config"
       },
       {
-        "command": "workspace_manager.reloadBrowser",
+        "command": "workspace_config.reloadBrowser",
         "title": "Reload Tab",
-        "category": "Workspace Manager",
+        "category": "Workspace Config",
         "icon": {
           "light": "images/reload_light.svg",
           "dark": "images/reload_dark.svg"

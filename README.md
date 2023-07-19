@@ -4,16 +4,30 @@ VSCode extension that lets you manage browser and terminal tabs inside your VSCo
 
 ## Example config
 
+Adding the following to a file called `workspace.json` inside your `.vscode` folder would open the defined
+tabs and terminals.
+
 ```json
 {
   "tabs": [
-    {"uri": "file:///c%3A/Users/jacks/code/src/github.com/shipyard-run/save-restore-editors/src/extension.ts", "viewColumn": 1, "focus": true},
-    {"uri": "https://www.shipyard.run", "title": "Shipyard"},
-    {"uri": "https://www.shipyard.run/docs/install", "title": "Docs"},
-    {"uri": "http://localhost:8080", "title": "Consul Thing"}
-  ],
-  "terminals": [
     {
+      "type": "file",
+      "uri": ".vscode/workspace.json",
+      "viewColumn": 1,
+      "active": true
+    },
+    {
+      "type": "browser",
+      "uri": "https://jumppad.dev",
+      "name": "Docs"
+    },
+    {
+      "type": "browser",
+      "uri": "https://jumppad.dev", 
+      "name": "Terminal 1"
+    },
+    {
+      "type": "terminal",
       "name": "Terminal 1", 
       "command": "docker ps", 
       "viewColumn": 1, 
@@ -21,9 +35,15 @@ VSCode extension that lets you manage browser and terminal tabs inside your VSCo
       "env": {"HOME": "/root"},
       "cwd": "/root"
     },
-    {"name": "Terminal 2", "command": "ls -la", "viewColumn": 1, "location": "panel", "focus": true}
+    {
+      "type": "terminal", 
+      "name": "Terminal 2", 
+      "command": "ls -la", 
+      "viewColumn": 1, 
+      "location": "panel"
+    }
   ],
-  "closeTabsOnStart": true,
-  "closeTerminalsOnStart": true
+  "closeAllTabsOnStart": true,
+  "closeAllTerminalsOnStart": true
 }
 ```
