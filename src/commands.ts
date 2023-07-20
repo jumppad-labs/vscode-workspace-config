@@ -212,6 +212,93 @@ async function openHtml(uri: vscode.Uri, name: string, column: number) {
   );
 }
 
+
+export function reloadBrowser(tab?:vscode.Tab) {
+  const activeTab = tab?.label ? tab : vscode.window.tabGroups.activeTabGroup.activeTab;
+  const panel = panels.find(p => p.title === activeTab?.label);
+  if(panel) {
+    panel.webview.postMessage({"function":"reloadIFrame"});
+  }
+}
+
+export async function restoreEditors(context: vscode.ExtensionContext) {
+  const configPath = getConfigPath();
+  if (configPath === undefined) {
+    return;
+  }
+
+  const config: TConfig = getConfig(configPath);
+
+  if (config.closeUnmanagedTabs) {
+    const tabs = vscode.window.tabGroups.all.map(group => group.tabs).flat()
+    .filter(tab => config.tabs.findIndex(t => {
+      if (tab.input instanceof vscode.TabInputText && t.type === "file") {
+        const file = <TFile>t;
+        const fileTab = <vscode.TabInputText>tab.input;
+        return path.join(getWorkspaceUri().path, file.uri) === fileTab.uri.path;
+      } else {
+        return t.name === tab.label;
+      }
+    }) === -1);
+  
+    tabs.forEach(tab => vscode.window.tabGroups.close(tab));
+  }
+  
+  if (config.closeUnmanagedTerminals) {
+    const terminals = vscode.window.terminals.filter(terminal => config.tabs.findIndex(t => t.name === terminal.name && t.type === "terminal") === -1);
+    terminals.forEach(terminal => terminal.dispose());
+  }
+
+  let unopenedTerminals = 0;
+  await config.tabs.forEach(async tab => {
+    switch(tab.type) {
+      case "file":
+        const file = <TFile>tab;  
+        await openFile(vscode.Uri.parse(file.uri, false));
+        break;
+      case "browser":
+        const browser = <TBrowser>tab;  
+        await openHtml(vscode.Uri.parse(browser.uri), browser.name, browser.viewColumn);
+        break;
+      case "terminal":
+        const terminal = <TTerminal>tab;  
+        let opened = await openTerminal(terminal.command, terminal.name, terminal.viewColumn, terminal.location);
+        if(opened) {
+          unopenedTerminals++;
+        }
+
+        break;
+    }
+  });
+
+  // wait for all the terminals to be opened.
+  if (unopenedTerminals > 0) {
+    let ot = vscode.window.onDidOpenTerminal(async event => {
+      unopenedTerminals--;
+      if(unopenedTerminals === 0) {
+        // on vscode in the browser this event can fire before the active
+        // tab setting the focus has been changed.
+        // delay setting the active tab to ensure the focus has been set
+        setTimeout(() => { openActiveTab(config); },500);
+        ot.dispose();
+      }
+    });
+  } else {
+    openActiveTab(config);
+  }
+}
+
+function openActiveTab(config:TConfig) {
+  let activeTab = getActiveTabIndex(config);
+  let command = "workbench.action.openEditorAtIndex" + activeTab;
+  let openTab = vscode.window.tabGroups.activeTabGroup.tabs.findIndex(t => t.isActive ) + 1;
+
+
+  if (openTab !== activeTab) {
+    vscode.commands.executeCommand(command);
+  }
+}
+
 function getWebViewHTML(uri: string) {
   return `<!DOCTYPE html>
         <html lang="en">
@@ -326,93 +413,8 @@ function getWebViewHTML(uri: string) {
               <li><div>${uri}</div></li>
               <li style="float:right"><a class="active" href="#" onclick="reloadIFrame()">&#x27F3</a></li>
             </ul>-->
-            <iframe width="100%" height="100%" src="${uri}" frameborder="0" id="content"></iframe>
+            <iframe width="100%" height="100%" src="${uri}" frameborder="0" id="content"
+              sandbox="allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-popups-to-escape-sandbox allow-presentation allow-scripts"></iframe>
         </body>
         </html>`;
-}
-
-export function reloadBrowser(tab?:vscode.Tab) {
-  const activeTab = tab?.label ? tab : vscode.window.tabGroups.activeTabGroup.activeTab;
-  const panel = panels.find(p => p.title === activeTab?.label);
-  if(panel) {
-    panel.webview.postMessage({"function":"reloadIFrame"});
-  }
-}
-
-export async function restoreEditors(context: vscode.ExtensionContext) {
-  const configPath = getConfigPath();
-  if (configPath === undefined) {
-    return;
-  }
-
-  const config: TConfig = getConfig(configPath);
-
-  if (config.closeUnmanagedTabs) {
-    const tabs = vscode.window.tabGroups.all.map(group => group.tabs).flat()
-    .filter(tab => config.tabs.findIndex(t => {
-      if (tab.input instanceof vscode.TabInputText && t.type === "file") {
-        const file = <TFile>t;
-        const fileTab = <vscode.TabInputText>tab.input;
-        return path.join(getWorkspaceUri().path, file.uri) === fileTab.uri.path;
-      } else {
-        return t.name === tab.label;
-      }
-    }) === -1);
-  
-    tabs.forEach(tab => vscode.window.tabGroups.close(tab));
-  }
-  
-  if (config.closeUnmanagedTerminals) {
-    const terminals = vscode.window.terminals.filter(terminal => config.tabs.findIndex(t => t.name === terminal.name && t.type === "terminal") === -1);
-    terminals.forEach(terminal => terminal.dispose());
-  }
-
-  let unopenedTerminals = 0;
-  await config.tabs.forEach(async tab => {
-    switch(tab.type) {
-      case "file":
-        const file = <TFile>tab;  
-        await openFile(vscode.Uri.parse(file.uri, false));
-        break;
-      case "browser":
-        const browser = <TBrowser>tab;  
-        await openHtml(vscode.Uri.parse(browser.uri), browser.name, browser.viewColumn);
-        break;
-      case "terminal":
-        const terminal = <TTerminal>tab;  
-        let opened = await openTerminal(terminal.command, terminal.name, terminal.viewColumn, terminal.location);
-        if(opened) {
-          unopenedTerminals++;
-        }
-
-        break;
-    }
-  });
-
-  // wait for all the terminals to be opened.
-  if (unopenedTerminals > 0) {
-    let ot = vscode.window.onDidOpenTerminal(async event => {
-      unopenedTerminals--;
-      if(unopenedTerminals === 0) {
-        // on vscode in the browser this event can fire before the active
-        // tab setting the focus has been changed.
-        // delay setting the active tab to ensure the focus has been set
-        setTimeout(() => { openActiveTab(config); },500);
-        ot.dispose();
-      }
-    });
-  } else {
-    openActiveTab(config);
-  }
-}
-
-function openActiveTab(config:TConfig) {
-  let activeTab = getActiveTabIndex(config);
-  let command = "workbench.action.openEditorAtIndex" + activeTab;
-  let openTab = vscode.window.tabGroups.activeTabGroup.tabs.findIndex(t => t.isActive ) + 1;
-
-
-  if (openTab !== activeTab) {
-    vscode.commands.executeCommand(command);
-  }
 }
