@@ -43,7 +43,7 @@ tabs and terminals.
       "location": "panel"
     }
   ],
-  "closeAllTabsOnStart": true,
-  "closeAllTerminalsOnStart": true
+  "closeUnmanagedTabs": true,
+  "closeUnmanagedTerminals": true
 }
 ```

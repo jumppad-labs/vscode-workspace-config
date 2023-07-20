@@ -4,8 +4,8 @@ import * as path from 'path';
 
 interface TConfig {
   tabs: TTab[];
-  closeAllTerminalsOnStart: boolean;
-  closeAllTabsOnStart: boolean;
+  closeUnmanagedTerminals: boolean;
+  closeUnmanagedTabs: boolean;
 }
 
 interface TTab {
@@ -38,8 +38,8 @@ var panels: vscode.WebviewPanel[] = [];
 
 const emptyConfig: TConfig = {
   tabs: [],
-  closeAllTabsOnStart: false,
-  closeAllTerminalsOnStart: false,
+  closeUnmanagedTabs: false,
+  closeUnmanagedTerminals: false,
 };
 
 function getConfigPath(): string | undefined {
@@ -97,7 +97,21 @@ function getActiveTabIndex(config: TConfig) {
   }
 
   const tabs = vscode.window.tabGroups.all.map(group => group.tabs).flat();
-  const index = tabs.findIndex(t => t.label === active.name);
+  const index = tabs.findIndex(t => {
+    if (t.input instanceof vscode.TabInputText && active.type === "file") {
+      const file = <TFile>active;
+      const fileTab = <vscode.TabInputText>t.input;
+
+      return path.join(getWorkspaceUri().path, file.uri) === fileTab.uri.path;
+    } else {
+      return t.label === active.name;
+    }
+  });
+
+  if (index === -1) {
+    return 1;
+  }
+
   return index+1;
 }
 
@@ -120,7 +134,9 @@ async function openTerminal(command: string, name: string, column: number, locat
     opened = true;
   }
 
-  term?.show();
+  if (location !== "editor") {
+    term?.show();
+  }
 
   if (command !== '') {
     term?.sendText(command);
@@ -331,7 +347,7 @@ export async function restoreEditors(context: vscode.ExtensionContext) {
 
   const config: TConfig = getConfig(configPath);
 
-  if (config.closeAllTabsOnStart) {
+  if (config.closeUnmanagedTabs) {
     const tabs = vscode.window.tabGroups.all.map(group => group.tabs).flat()
     .filter(tab => config.tabs.findIndex(t => {
       if (tab.input instanceof vscode.TabInputText && t.type === "file") {
@@ -346,45 +362,57 @@ export async function restoreEditors(context: vscode.ExtensionContext) {
     tabs.forEach(tab => vscode.window.tabGroups.close(tab));
   }
   
-  if (config.closeAllTerminalsOnStart) {
+  if (config.closeUnmanagedTerminals) {
     const terminals = vscode.window.terminals.filter(terminal => config.tabs.findIndex(t => t.name === terminal.name && t.type === "terminal") === -1);
     terminals.forEach(terminal => terminal.dispose());
   }
 
-  config.tabs.forEach(tab => {
+  let unopenedTerminals = 0;
+  await config.tabs.forEach(async tab => {
     switch(tab.type) {
       case "file":
         const file = <TFile>tab;  
-        openFile(vscode.Uri.parse(file.uri, false));
+        await openFile(vscode.Uri.parse(file.uri, false));
         break;
       case "browser":
         const browser = <TBrowser>tab;  
-        openHtml(vscode.Uri.parse(browser.uri), browser.name, browser.viewColumn);
+        await openHtml(vscode.Uri.parse(browser.uri), browser.name, browser.viewColumn);
         break;
       case "terminal":
         const terminal = <TTerminal>tab;  
-        openTerminal(terminal.command, terminal.name, terminal.viewColumn, terminal.location);
+        let opened = await openTerminal(terminal.command, terminal.name, terminal.viewColumn, terminal.location);
+        if(opened) {
+          unopenedTerminals++;
+        }
+
         break;
     }
   });
 
-  // get terminals from config, check how many of those don't exist atm
-  const unopenedTerminals = vscode.window.terminals.filter(terminal => config.tabs.findIndex(t => t.name === terminal.name && t.type === "terminal") === -1);
-
   // wait for all the terminals to be opened.
-  let unopenedCount = unopenedTerminals.length;
-  if (unopenedCount > 0) {
-    let ot = vscode.window.onDidOpenTerminal((event) => {
-      unopenedCount--;
-      if(unopenedCount === 0) {
-        vscode.commands.executeCommand(`workbench.action.openEditorAtIndex${getActiveTabIndex(config)}`);
+  if (unopenedTerminals > 0) {
+    let ot = vscode.window.onDidOpenTerminal(async event => {
+      unopenedTerminals--;
+      if(unopenedTerminals === 0) {
+        // on vscode in the browser this event can fire before the active
+        // tab setting the focus has been changed.
+        // delay setting the active tab to ensure the focus has been set
+        setTimeout(() => { openActiveTab(config); },500);
         ot.dispose();
       }
     });
+  } else {
+    openActiveTab(config);
   }
 }
 
-function setActiveTab(config:TConfig) {
-    const active = vscode.window.tabGroups.all.map(group => group.tabs).flat().find(tab => tab.isActive);
-    
+function openActiveTab(config:TConfig) {
+  let activeTab = getActiveTabIndex(config);
+  let command = "workbench.action.openEditorAtIndex" + activeTab;
+  let openTab = vscode.window.tabGroups.activeTabGroup.tabs.findIndex(t => t.isActive ) + 1;
+
+
+  if (openTab !== activeTab) {
+    vscode.commands.executeCommand(command);
+  }
 }

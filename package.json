@@ -3,7 +3,7 @@
   "displayName": "Workspace Config",
   "description": "VSCode extension that allows defined workspace setup for tabs and terminals",
   "publisher": "Jumppad",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "repository": "https://github.com/jumppad-labs/vscode-workspace-config.git",
   "engines": {
     "vscode": "^1.69.0"
